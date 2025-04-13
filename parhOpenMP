@@ -1,0 +1,92 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <omp.h>
+
+#define WIDTH 800
+#define HEIGHT 800
+#define FRAMES 60
+#define MAX_BASE_ITER 500
+#define MAX_EXTRA_ITER 1000
+
+typedef struct {
+    unsigned char r, g, b;
+} Color;
+
+// Mandelbrot függvény
+int mandelbrot(double cx, double cy, int max_iter) {
+    double x = 0.0, y = 0.0;
+    int iter = 0;
+    while (x*x + y*y <= 4.0 && iter < max_iter) {
+        double xtemp = x*x - y*y + cx;
+        y = 2.0 * x * y + cy;
+        x = xtemp;
+        iter++;
+    }
+    return iter;
+}
+
+// Szín generátor
+Color get_color(int iter, int max_iter) {
+    Color color;
+    if (iter == max_iter) {
+        color.r = color.g = color.b = 0;
+    } else {
+        double t = (double)iter / max_iter;
+        color.r = (unsigned char)(9 * (1 - t) * t * t * t * 255);
+        color.g = (unsigned char)(15 * (1 - t) * (1 - t) * t * t * 255);
+        color.b = (unsigned char)(8.5 * (1 - t) * (1 - t) * (1 - t) * t * 255);
+    }
+    return color;
+}
+
+// Kép mentése PPM fájlba
+void save_image(Color image[HEIGHT][WIDTH], int frame) {
+    char filename[64];
+    sprintf(filename, "mandelbrot_frame_%03d.ppm", frame);
+    FILE* f = fopen(filename, "w");
+    fprintf(f, "P3\n%d %d\n255\n", WIDTH, HEIGHT);
+    for (int y = 0; y < HEIGHT; y++)
+        for (int x = 0; x < WIDTH; x++)
+            fprintf(f, "%d %d %d\n", image[y][x].r, image[y][x].g, image[y][x].b);
+    fclose(f);
+}
+
+int main() {
+    Color image[HEIGHT][WIDTH];
+    double zoom = 1.0;
+    double zoom_factor = 0.97;
+    double center_x = -0.75, center_y = 0.0;
+
+    for (int frame = 0; frame < FRAMES; frame++) {
+        double scale = 3.0 * zoom;
+        double x_start = center_x - scale / 2.0;
+        double y_start = center_y - scale / 2.0;
+        double step = scale / WIDTH;
+
+        #pragma omp parallel for schedule(dynamic)
+        for (int y = 0; y < HEIGHT; y++) {
+            for (int x = 0; x < WIDTH; x++) {
+                double cx = x_start + x * step;
+                double cy = y_start + y * step;
+
+                // Adaptív iterációs határ a képkocka középső régiójában
+                int max_iter = MAX_BASE_ITER;
+                if (x > WIDTH / 3 && x < 2 * WIDTH / 3 &&
+                    y > HEIGHT / 3 && y < 2 * HEIGHT / 3) {
+                    max_iter += MAX_EXTRA_ITER;
+                }
+
+                int iter = mandelbrot(cx, cy, max_iter);
+                image[y][x] = get_color(iter, max_iter);
+            }
+        }
+
+        save_image(image, frame);
+        zoom *= zoom_factor;
+        printf("Készen: %d/%d frame\n", frame + 1, FRAMES);
+    }
+
+    printf("Animáció generálása kész.\n");
+    return 0;
+}
